@@ -1,0 +1,64 @@
+name: Daily Podcast Generation
+
+on:
+  schedule:
+    # UTC 21:00 = JST 06:00
+    - cron: '0 21 * * *'
+  workflow_dispatch:
+    inputs:
+      date_override:
+        description: '任意の日付文字列（例: 2026-05-22）。省略すると実行日を使用。'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  generate-podcast:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: リポジトリをチェックアウト
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Python 3.11 をセットアップ
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: FFmpeg をインストール
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y ffmpeg
+
+      - name: Python ライブラリをインストール
+        run: pip install -r requirements.txt
+
+      - name: ポッドキャストを生成
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          GOOGLE_REFRESH_TOKEN: ${{ secrets.GOOGLE_REFRESH_TOKEN }}
+          DATE_OVERRIDE: ${{ github.event.inputs.date_override }}
+        run: python main.py
+
+      - name: 中間成果物を git にコミット
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # JSON 成果物をステージング（存在しない場合は無視）
+          git add output/research.json output/script.json investigated_versions.json 2>/dev/null || true
+
+          # 差分がある場合のみコミット
+          if git diff --staged --quiet; then
+            echo "コミットする変更がありません"
+          else
+            git commit -m "podcast: v$(python -c "import json; d=json.load(open('investigated_versions.json')); print(d['versions'][-1] if d['versions'] else 'unknown')") の成果物を追加 [skip ci]"
+            git push
+          fi
